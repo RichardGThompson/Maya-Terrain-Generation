@@ -27,6 +27,7 @@ cmds.intSliderGrp('height', label='Length', min=1, max=25)
 cmds.intSliderGrp('subD', label='Subdivision Density', min=1, max=3)
 cmds.floatSliderGrp('minHeight', label='Min Terrain Height', min=-2.0, max=0.0)
 cmds.floatSliderGrp('maxHeight', label='Max Terrain Height', min=1.0, max=2.0)
+cmds.floatSliderGrp('groundWidth', label='Ground Plane Width', min=2.0, max=8.0)
 
 cmds.button(label='Generate Terrain', command='generateTerrain()')
 
@@ -105,6 +106,10 @@ def Noise2D(x,z,permIn):
 
     return lerpValues(u, lerpValues(v, dotBLeft, dotTLeft), lerpValues(v, dotBRight, dotTRight))
 
+# This is purley because I don't want to write out the command everytime, pure laziness...
+def clearSelection():
+    cmds.select(clear=True)
+
 def generateTerrain():
     # Get the values from the ui
     pWidth = cmds.intSliderGrp('width', query=True, value=True)
@@ -138,8 +143,36 @@ def generateTerrain():
             cmds.select('{}.vtx[{}]'.format(pTerrain[0], count))
             cmds.move(0,n,0,r=True)
             count+=1
-            
+    
+    # Center the pivot point before moving forwards...
+    cmds.xform(pTerrain[0], cp=True)
+    
+    # TESTING OF CREATING A GROUND PLANE ALONG THE Z AXIS!
 
+    # See if we are able to select a whole row of verts...
+    # First we need to figure out how many verts are in x and z
+    zRows = (pHeight * pSubDensity) + 1
+    xRows = (pWidth * pSubDensity) + 1
+
+    #Now that we know how many verts are in each dimension we can now select a whole-ass row of them (maybe)
+    xOffset = int(math.ceil(xRows/2.0))
+    print('xOffset: {}'.format(xOffset))
+    # Make sure the current selection is clear before moving forwards
+    clearSelection()
+    # Iterate through each of the verts in the z
+
+    for i in range(zRows):
+        vtxId = (xRows * i) + xOffset
+        cmds.select('{}.vtx[{}]'.format(pTerrain[0], vtxId), tgl=True)
+    
+    cmds.softSelect(sse=True,ssd=cmds.floatSliderGrp('groundWidth', query=True, value=True), sud=0.5)
+
+    cmds.scale(1, 0.00001, 1, r=True)
+
+    cmds.softSelect(sse=False)
+
+    clearSelection()
+    
 
 
             
