@@ -8,10 +8,7 @@ import math
 # Perlin Noise Algorithim based on: https://rtouti.github.io/graphics/perlin-noise-algorithm
 
 '''----- GLOBAL VARAIBLES -----'''
-amplitude = 1.2
-ordFreq = 1.5
-angFreq = 2 * math.pi * ordFreq
-phase = 1
+yNormalVectorThreshold = 0.985
 
 if 'ui' in globals():
     if cmds.window(ui, exists=True):
@@ -33,6 +30,38 @@ cmds.button(label='Generate Terrain', command='generateTerrain()')
 
 cmds.showWindow(ui)
 
+def getVertices(object, faceID):
+    vertexIDs = cmds.polyInfo('{}.f[{}]'.format(object, faceID), faceToVertex=True)
+    vertexIDs = str(vertexIDs).split()
+    vertexA = cmds.xform('{}.vtx[{}]'.format(object, vertexIDs[2]), query=True, translation=True, worldSpace=True)
+    vertexB = cmds.xform('{}.vtx[{}]'.format(object, vertexIDs[3]), query=True, translation=True, worldSpace=True)
+    vertexC = cmds.xform('{}.vtx[{}]'.format(object, vertexIDs[4]), query=True, translation=True, worldSpace=True)
+    vertexD = []
+    if(len(vertexIDs) == 7):
+        vertexD = cmds.xform('{}.vtx[{}]'.format(object, vertexIDs[5]), query=True, translation=True, worldSpace=True)
+
+    return [vertexA, vertexB, vertexC, vertexD]
+
+def vectorFromPoints(pointA, pointB):
+    return[pointB[0] - pointA[0], pointB[1] - pointA[1], pointB[2] - pointA[2]]
+
+def getVectorMagnitude(vector):
+    return((vector[0] ** 2) + (vector[1] ** 2) + (vector[2] ** 2)) ** 0.5
+
+def getCrossProduct(vectorA, vectorB):
+    crossProduct = [0.0,0.0,0.0]
+    crossProduct[0] = (vectorA[1] * vectorB[2]) - (vectorA[2] * vectorB[1])
+    crossProduct[1] = (vectorA[2] * vectorB[0]) - (vectorA[0] * vectorB[2])
+    crossProduct[2] = (vectorA[0] * vectorB[1]) - (vectorA[1] * vectorB[0])
+    return crossProduct
+
+def getNormalVector(triangleVerticies):
+    vectorA = vectorFromPoints(triangleVerticies[0], triangleVerticies[1])
+    vectorB = vectorFromPoints(triangleVerticies[0], triangleVerticies[2])
+    crossProduct = getCrossProduct(vectorA, vectorB)
+    magnitude = getVectorMagnitude(crossProduct)
+    return [crossProduct[0] / magnitude, crossProduct[1] / magnitude, crossProduct[2] / magnitude]
+
 def vectorFromPoints(pointA, pointB):
     return[pointB[0] - pointA[0], pointB[1] - pointA[1], pointB[2] - pointA[2]]
 
@@ -44,6 +73,28 @@ def setSinHeight(tValue):
 
 def getVtxId(xValueIn, zValueIn, xCountIn, zCountIn):
     return((zCountIn * zValueIn) + xValueIn)
+
+
+def averageVectors(vectorsIn):
+    # Create a vector to store the averaged values
+    averagedVector = [0,0,0]
+    # Tracking the current axis values are being added to
+    axisCount = 0
+    # Go through each of the vectors contained in vectorsIn
+    for vector in vectorsIn:
+        # Reset the axisCount before moving to the first/next vector
+        axisCount = 0
+        # Get the value from each axis in the vector and add them to the vector to be averaged
+        for val in vector:
+            averagedVector[axisCount] += val
+            # Increment the axisCounter
+            axisCount += 1
+    
+    # Average each of the axies of the vector
+    for i in range(len(averagedVector)):
+        averagedVector[i] = averagedVector[i] / len(vectorsIn)
+    
+    return averagedVector
 
 # Create the range of height values randomly for x and z
 def createPermutation():
@@ -172,6 +223,69 @@ def generateTerrain():
     cmds.softSelect(sse=False)
 
     clearSelection()
+
+    # Figure out wich of the faces are flat enough for trees to be placed on them.
+    # To start let's look at the neighboring faces where the flattening was performed
+    
+    # NOTE: CLEAN THIS SHIT UP, CODE BAD, UGLY, GROSS
+    zFaces = zRows - 1
+    xFaces = xRows - 1
+
+    xFaceOffset = xOffset - 1
+
+    # Check n on each side
+    neighborsToCheckCount = 3
+    xFaceOffsetList = []
+    faceIdList = []
+
+    tmpXOffset = xFaceOffset - (neighborsToCheckCount - 1)
+
+    for i in range((neighborsToCheckCount*2) + 1):
+        xFaceOffsetList.append(tmpXOffset)
+        tmpXOffset += 1
+
+    for offset in xFaceOffsetList:
+        for i in range(zFaces):
+            faceIdList.append((xFaces * i) + offset)
+
+    foliageFaces = []
+    
+    # Check to see what faces are able to have foilage on them based on their y value of the normal vector.
+    for faceId in faceIdList:
+        faceVerts = []
+        vertSequences = []
+        normalVectors = []
+
+        for element in getVertices(pTerrain[0], faceId):
+            if element:
+                faceVerts.append(element)
+
+        if len(faceVerts) == 4:
+            vertSequences.append([faceVerts[0], faceVerts[1], faceVerts[2]])
+            vertSequences.append([faceVerts[0], faceVerts[2], faceVerts[3]])
+        elif len(faceVerts) == 3:
+            vertSequences.append([faceVerts[0], faceVerts[1], faceVerts[2]])
+        
+        for triangleVertices in vertSequences:
+            # Get all the information that we need about the triangle
+            triangleNormalVector = getNormalVector(triangleVertices)
+            normalVectors.append(triangleNormalVector)
+
+        # Get the averaged normal vector from the face
+        faceNormal = averageVectors(normalVectors)
+        
+
+        if faceNormal[1] >= yNormalVectorThreshold:
+            foliageFaces.append(faceId)
+    
+    # Print out what faces are compatable
+    print('Compatable faces: {}'.format(foliageFaces))
+
+    for face in foliageFaces:
+        cmds.select('{}.f[{}]'.format(pTerrain[0], face), tgl=True)
+
+    
+
     
 
 
