@@ -2,14 +2,12 @@ import maya.cmds as cmds
 import random
 import math
 
-# NOTES:
-# Z=Height
-# X=Width
 # Perlin Noise Algorithim based on: https://rtouti.github.io/graphics/perlin-noise-algorithm
 
 '''----- GLOBAL VARAIBLES -----'''
 yNormalVectorThreshold = 0.985
 
+# Set up all of the UI elements
 if 'ui' in globals():
     if cmds.window(ui, exists=True):
         cmds.deleteUI(ui, window=True)
@@ -19,16 +17,65 @@ ui = cmds.window(title='Terrain Generation', width=400)
 cmds.columnLayout(rowSpacing=10)
 cmds.text(label='Terrain Generator')
 
-cmds.intSliderGrp('width', label='Width', min=1, max=25)
-cmds.intSliderGrp('height', label='Length', min=1, max=25)
+# Set up all of the sliders that are needed
+cmds.intSliderGrp('width', label='Width', min=10, max=25)
+cmds.intSliderGrp('height', label='Length', min=10, max=25)
 cmds.intSliderGrp('subD', label='Subdivision Density', min=1, max=3)
 cmds.floatSliderGrp('minHeight', label='Min Terrain Height', min=-2.0, max=0.0)
 cmds.floatSliderGrp('maxHeight', label='Max Terrain Height', min=1.0, max=2.0)
 cmds.floatSliderGrp('groundWidth', label='Ground Plane Width', min=2.0, max=8.0)
+cmds.floatSliderGrp('foliageDensity', label='Foliage Density', min=0.0, max= 1.0)
 
+# When the user presses this button the program will call on the generateTerrain method
 cmds.button(label='Generate Terrain', command='generateTerrain()')
 
 cmds.showWindow(ui)
+
+def moveGrassObject(objectNumber):
+    majorPositionVal = random.uniform(1.0, 2.5)
+    minorPositionVal = random.uniform(-0.5, 0.5)
+
+    if(objectNumber == 1):
+        cmds.move(majorPositionVal, 0, minorPositionVal, r=True)
+    elif(objectNumber == 2):
+        cmds.move(-majorPositionVal, 0, minorPositionVal)
+    elif(objectNumber == 3):
+        cmds.move(minorPositionVal,0,majorPositionVal)
+    elif(objectNumber == 4):
+        cmds.move(minorPositionVal,0,-majorPositionVal)
+
+def generateGrass(numberOfGrassObjects):
+    # Create list to hold the objects within the grass to be created
+    grassObjects = []
+    # Make a grass object for each part
+    for i in range(numberOfGrassObjects):
+        # Start by creating a new object for the grass to be built with
+        grassObjects.append(cmds.polyCube(w=1, h=0.01, d=1))
+        # Move the object into a position accordingly
+        if (i != 0):moveGrassObject(i)
+
+        # Make the grass do grass things...
+        grassSegments = random.randint(3,7)
+        currentName = grassObjects[len(grassObjects) - 1][0]
+        cmds.select('{}.f[{}]'.format(currentName, 1))  
+        # Randomly extrude and position the grass
+        for i in range(grassSegments):
+            translateList = [random.uniform(-0.5, 0.5),random.uniform(-0.5, 0.5),random.uniform(0.5,1.5)]
+            cmds.polyExtrudeFacet(localTranslate=translateList, localScale=(0.7,0.7,0.7))
+    
+
+    # Now that we have all of the grass that we need generated we can now group it all and return it
+    for grass in grassObjects:
+        cmds.select(grass[0], tgl=True)
+    
+    grassGrp = cmds.polyUnite(ch=False)
+    cmds.select(grassGrp[0])
+
+    # My smooth brain made the grass way too big, so let's scale it down afterwards and pretend nothing happened, it will be fine
+    scaleValue = random.uniform(0.02,0.1)
+    cmds.scale(scaleValue,scaleValue,scaleValue)
+
+    return grassGrp
 
 def getVertices(object, faceID):
     vertexIDs = cmds.polyInfo('{}.f[{}]'.format(object, faceID), faceToVertex=True)
@@ -73,7 +120,6 @@ def setSinHeight(tValue):
 
 def getVtxId(xValueIn, zValueIn, xCountIn, zCountIn):
     return((zCountIn * zValueIn) + xValueIn)
-
 
 def averageVectors(vectorsIn):
     # Create a vector to store the averaged values
@@ -162,95 +208,88 @@ def clearSelection():
     cmds.select(clear=True)
 
 def generateTerrain():
+    # Local Varaibles
+    terrainHeights = []
+    tempList = []
+    perlinCount = 0
+    
     # Get the values from the ui
     pWidth = cmds.intSliderGrp('width', query=True, value=True)
     pHeight = cmds.intSliderGrp('height', query=True, value=True)
     pSubDensity = cmds.intSliderGrp('subD', query=True, value=True)
     pMinHeight = cmds.floatSliderGrp('minHeight', query=True, value=True)
     pMaxHeight = cmds.floatSliderGrp('maxHeight', query=True, value=True)
+    pFoliageDensity = cmds.floatSliderGrp('foliageDensity', q=True, value=True)
 
     # Create a plane based on the user input
     pTerrain = cmds.polyPlane(width=pWidth, height=pHeight, subdivisionsX=pWidth*pSubDensity, subdivisionsY=pHeight*pSubDensity)
 
-    terrainHeights = []
-    tempList = []
-
-    vtx = getVtxId(0,0,(pWidth * pSubDensity)+1, (pHeight * pSubDensity)+1)
-    cmds.select('{}.vtx[{}]'.format(pTerrain[0], vtx))
-
+    # Create the permutations needed for the perlin noise algorithim
     perms = createPermutation()
 
-    # print('createPerm: {} len: {}'.format(perms, len(perms)))
-    count = 0
-
-    # Go though each of the z values
+    # Go through each of the verts in the plane and modify them by passing the x/z values into the perlin noise algorithim
     for z in range((pHeight * pSubDensity) + 1):
         for x in range((pWidth * pSubDensity) + 1):
-            #print('x: {}'.format(x))
             n = Noise2D(x*0.05, z*0.05, perms)
-            #print('n val: {}'.format(n))
-            # As we are working in 2 dimensions, Noise2D will return values from -1.0f to 1.0f, we can map this to a range that we want later.
+            # As we are working in 2 dimensions, Noise2D will return values from -1.0f to 1.0f, we can map this to a range that we want later
             n = mapValue(0.0, 1.0, pMinHeight, pMaxHeight, n)
-            cmds.select('{}.vtx[{}]'.format(pTerrain[0], count))
+            cmds.select('{}.vtx[{}]'.format(pTerrain[0], perlinCount))
             cmds.move(0,n,0,r=True)
-            count+=1
+            perlinCount+=1
     
     # Center the pivot point before moving forwards...
     cmds.xform(pTerrain[0], cp=True)
-    
-    # TESTING OF CREATING A GROUND PLANE ALONG THE Z AXIS!
 
-    # See if we are able to select a whole row of verts...
-    # First we need to figure out how many verts are in x and z
+    # Determine how many verts are in x and z
     zRows = (pHeight * pSubDensity) + 1
     xRows = (pWidth * pSubDensity) + 1
 
-    #Now that we know how many verts are in each dimension we can now select a whole-ass row of them (maybe)
+    # Determine the x row value for the center of the plane
     xOffset = int(math.ceil(xRows/2.0))
-    print('xOffset: {}'.format(xOffset))
     # Make sure the current selection is clear before moving forwards
     clearSelection()
-    # Iterate through each of the verts in the z
-
+    
+    # Select each of the verts in the Z axis offset by xOffset
     for i in range(zRows):
         vtxId = (xRows * i) + xOffset
         cmds.select('{}.vtx[{}]'.format(pTerrain[0], vtxId), tgl=True)
     
+    # Soft select the verts, with a soft selection distance by the user input
     cmds.softSelect(sse=True,ssd=cmds.floatSliderGrp('groundWidth', query=True, value=True), sud=0.5)
-
+    # Flatten the terrain
     cmds.scale(1, 0.00001, 1, r=True)
-
+    # Ensure that soft selection is disabled and clear the current selection
     cmds.softSelect(sse=False)
-
     clearSelection()
 
     # Figure out wich of the faces are flat enough for trees to be placed on them.
     # To start let's look at the neighboring faces where the flattening was performed
     
     # NOTE: CLEAN THIS SHIT UP, CODE BAD, UGLY, GROSS
-    zFaces = zRows - 1
-    xFaces = xRows - 1
+    # zFaces = zRows - 1
+    # xFaces = xRows - 1
+    centerFaces = [(zRows - 1), (xRows - 1)]
 
-    xFaceOffset = xOffset - 1
-
-    # Check n on each side
+    # The number of faces to check on either side of the center
     neighborsToCheckCount = 3
     xFaceOffsetList = []
     faceIdList = []
 
-    tmpXOffset = xFaceOffset - (neighborsToCheckCount - 1)
+    tmpXOffset = (xOffset - 1) - (neighborsToCheckCount - 1)
 
+    # Create a list of x offsets that need to be checked later
     for i in range((neighborsToCheckCount*2) + 1):
         xFaceOffsetList.append(tmpXOffset)
         tmpXOffset += 1
-
+    # Append the IDs of the center faces to be checked
     for offset in xFaceOffsetList:
-        for i in range(zFaces):
-            faceIdList.append((xFaces * i) + offset)
+        for i in range(centerFaces[0]):
+            faceIdList.append((centerFaces[1] * i) + offset)
 
+    # A list to store the list of faces that foliage can be placed on
     foliageFaces = []
     
-    # Check to see what faces are able to have foilage on them based on their y value of the normal vector.
+    # Check to see what faces are able to have foilage on them based on their y value of the normal vector
     for faceId in faceIdList:
         faceVerts = []
         vertSequences = []
@@ -260,11 +299,9 @@ def generateTerrain():
             if element:
                 faceVerts.append(element)
 
-        if len(faceVerts) == 4:
-            vertSequences.append([faceVerts[0], faceVerts[1], faceVerts[2]])
-            vertSequences.append([faceVerts[0], faceVerts[2], faceVerts[3]])
-        elif len(faceVerts) == 3:
-            vertSequences.append([faceVerts[0], faceVerts[1], faceVerts[2]])
+        # Because we have created a plane with quads we can create 2 vert sequences to check (A,B,C and A,C,D)
+        vertSequences.append([faceVerts[0], faceVerts[1], faceVerts[2]])
+        vertSequences.append([faceVerts[0], faceVerts[2], faceVerts[3]])
         
         for triangleVertices in vertSequences:
             # Get all the information that we need about the triangle
@@ -273,21 +310,53 @@ def generateTerrain():
 
         # Get the averaged normal vector from the face
         faceNormal = averageVectors(normalVectors)
-        
 
+        # If the y normal of the face is greater or equal to the preset threshold then append it to the list of foliage faces
         if faceNormal[1] >= yNormalVectorThreshold:
             foliageFaces.append(faceId)
+    # Determine how much foliage should be placed by taking the number of compatable foliage faces and multiplying it by the user-set foliage density value (0.0 to 1.0)
+    foliageFacesCount = int(math.ceil(len(foliageFaces) * pFoliageDensity))
     
-    # Print out what faces are compatable
-    print('Compatable faces: {}'.format(foliageFaces))
-
-    for face in foliageFaces:
-        cmds.select('{}.f[{}]'.format(pTerrain[0], face), tgl=True)
-
+    # To make sure we don't cause an inf loop, make sure the count is not bigger than the actual avaiable to select
+    if foliageFacesCount > len(foliageFaces):
+        foliageFacesCount = len(foliageFaces)
     
+    # A list that will contain the IDs of the faces to have foliage placed on them
+    foliageFacesToAddGrass = []
 
-    
+    # Based on the number of foliage to be created, randomly assign IDs
+    for i in range(foliageFacesCount):
+        # Okay so this really isn't the best way to go about this, it is wildly inefficient, but it works. Also, insert Silicon Valley reference here: https://youtu.be/KmHZMiohXVM?t=85
+        # Set the index value to a random value from 0 to the size of the foliageFaces list
+        index = random.randint(0, len(foliageFaces) - 1)
+        # Make sure the selected index value isn't already in the list
+        if index not in foliageFacesToAddGrass:
+            # Append the ID based on the index of the foliageFaces list
+            foliageFacesToAddGrass.append(foliageFaces[index])
 
+    # Go through each of the faces that need foliage added to them and add it
+    for foliageFaceId in foliageFacesToAddGrass:
+        cmds.select('{}.f[{}]'.format(pTerrain[0], foliageFaceId), tgl=True)
+        
+        # Create a new grass object with a random number of parts
+        grassObject = generateGrass(random.randint(2,5))
 
-            
+        # Get the center of the face
+        cmds.select('{}.f[{}]'.format(pTerrain[0], foliageFaceId))
+        sel = cmds.ls(sl=True)
+        faceValues = cmds.xform(sel, q=True, ws=True, t=True)
+        
+        bottomLeftPoint = [faceValues[0], faceValues[1], faceValues[2]]
+        bottomRightPoint = [faceValues[3], faceValues[4], faceValues[5]]
+        topLeftPoint = [faceValues[6], faceValues[7], faceValues[8]]
+        topRightPoint = [faceValues[9], faceValues[10], faceValues[11]]
 
+        # Average the points of the face to the the center
+        centerPoint = [0,0,0]
+        centerPoint[0] = (bottomLeftPoint[0] + bottomRightPoint[0] + topLeftPoint [0] + topRightPoint[0]) / 4
+        centerPoint[1] = (bottomLeftPoint[1] + bottomRightPoint[1] + topLeftPoint [1] + topRightPoint[1]) / 4
+        centerPoint[2] = (bottomLeftPoint[2] + bottomRightPoint[2] + topLeftPoint [2] + topRightPoint[2]) / 4
+
+        # Move the grass to the center of the face
+        cmds.select(grassObject[0])
+        cmds.move(centerPoint[0], centerPoint[1], centerPoint[2], ws=True)
